@@ -97,9 +97,11 @@ than one build: the boot, pad and recorded-flight suites run on all three.
 `sim` is the simulator, not a test: see `sim/README.md`.
 
 `test/web/run_web_tests.sh` runs the Playwright suite against the mock server
-in all three modes, then `test_sim.spec.js` against `docs/` served as GitHub
-Pages serves it (`static_server.js`): the browser demo's WASM build, flown from
-power-on to LANDED. Run it from `test/web` after `npm install` and
+in all three modes, then `test_sim.spec.js` and `test_explorer.spec.js` against
+`docs/` served as GitHub Pages serves it (`static_server.js`): the browser
+demo's WASM build, flown from power-on to LANDED, and the flight data explorer
+on files from the disk and from the repository, GitHub answered from
+`test_data/`. Run it from `test/web` after `npm install` and
 `npx playwright install chromium`.
 
 `scripts/run_host_tests.sh` also runs the checks that read the source rather

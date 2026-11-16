@@ -201,13 +201,13 @@ jobs:
             if [ $RESULT -ne 0 ]; then exit $RESULT; fi
           done
 
-      - name: Browser simulator
+      - name: Browser simulator and flight data explorer
         run: |
           cd test/web
           node static_server.js ../../docs 3457 &
           PID=$!
           sleep 1
-          SIM_URL=http://localhost:3457 npx playwright test test_sim.spec.js --reporter=list 2>&1
+          SIM_URL=http://localhost:3457 npx playwright test test_sim.spec.js test_explorer.spec.js --reporter=list 2>&1
           RESULT=$?
           kill $PID 2>/dev/null; wait $PID 2>/dev/null || true
           exit $RESULT

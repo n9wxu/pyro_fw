@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flight Data Explorer</title>
+<style>
+/* Layout: an instrument bench. A left rail holds the layers, the events and the
+   fitting tools; the right holds stacked plots, one per unit, on one time axis. */
+:root {
+  --bg: #f4f6f9; --panel: #ffffff; --ink: #131820; --ink2: #556170; --line: #d5dbe3;
+  --grid: #e9edf2; --accent: #1c5cab; --accent-ink: #ffffff; --event: #6f7c8d;
+  --band: rgba(42, 120, 214, .16); --warn: #a8430f;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11141a; --panel: #1a1e26; --ink: #eef1f4; --ink2: #a9b3c0; --line: #303743;
+    --grid: #262c36; --accent: #6da7ec; --accent-ink: #0c1420; --event: #8c98a8;
+    --band: rgba(109, 167, 236, .2); --warn: #ec835a;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #0ca30c; --s7: #9085e9; --s8: #e66767;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11141a; --panel: #1a1e26; --ink: #eef1f4; --ink2: #a9b3c0; --line: #303743;
+  --grid: #262c36; --accent: #6da7ec; --accent-ink: #0c1420; --event: #8c98a8;
+  --band: rgba(109, 167, 236, .2); --warn: #ec835a;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #0ca30c; --s7: #9085e9; --s8: #e66767;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg); color: var(--ink); font: 14px/1.45 var(--font);
+  padding-block: 14px 28px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+body.dropping { outline: 3px dashed var(--accent); outline-offset: -6px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; margin-bottom: 12px; }
+h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; }
+header p { margin: 0; color: var(--ink2); }
+h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink2); margin: 0 0 8px; }
+.bench { display: grid; grid-template-columns: minmax(270px, 330px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.rail { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.plots, .stack { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; min-width: 0; }
+button, select, input { font: inherit; color: var(--ink); }
+button {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 4px 10px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.x { padding: 0 6px; color: var(--ink2); line-height: 1.5; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+select, input[type="number"], input[type="text"] {
+  background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; min-width: 0;
+}
+input[type="number"] { width: 5.2em; font-variant-numeric: tabular-nums; }
+.repo { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.repo select { width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; font-size: 12px; }
+.repo select option { padding: 1px 4px; }
+.file { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px; }
+.file:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+.filehead { display: flex; gap: 6px; align-items: center; }
+.filename { font-weight: 600; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.shift { display: flex; gap: 6px; align-items: center; color: var(--ink2); margin: 4px 0 6px; font-size: 12px; }
+.layer { display: grid; grid-template-columns: auto 14px minmax(0, 1fr) auto; gap: 6px; align-items: center; padding: 2px 0; }
+.layer label { min-width: 0; overflow-wrap: anywhere; cursor: pointer; }
+.layer .unit { width: 4.6em; font-size: 12px; padding: 1px 4px; }
+.swatch { width: 14px; height: 4px; border-radius: 2px; background: var(--line); }
+.note { grid-column: 3 / 5; color: var(--ink2); font: 12px/1.4 var(--mono); overflow-wrap: anywhere; }
+.muted { color: var(--ink2); font-size: 12px; margin: 6px 0 0; }
+.sources { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-bottom: 8px; }
+.sources label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.sources .count { color: var(--ink2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.events { max-height: 240px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.events button {
+  display: grid; grid-template-columns: 5.2em minmax(0, 1fr); gap: 8px; text-align: left; border: 0;
+  padding: 2px 4px; background: none; font-variant-numeric: tabular-nums;
+}
+.events button:hover { background: var(--bg); }
+.events .log { color: var(--ink2); font-size: 12px; }
+.events span:last-child { overflow-wrap: anywhere; }
+.tool { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 8px; align-items: center; }
+.tool label { color: var(--ink2); font-size: 12px; }
+.tool select { width: 100%; }
+.tool .go { grid-column: 1 / 3; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bar { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.bar .span { color: var(--ink2); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.readout {
+  display: flex; flex-wrap: wrap; gap: 4px 14px; min-height: 3.2em; align-content: flex-start;
+  font-variant-numeric: tabular-nums; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
+}
+.readout .t { font-weight: 600; min-width: 7em; }
+.readout .chip { display: inline-flex; gap: 6px; align-items: center; }
+.panel h3 { font-size: 12px; font-weight: 600; margin: 0 0 4px; color: var(--ink2); }
+canvas { display: block; width: 100%; height: 230px; touch-action: pan-y; cursor: crosshair; }
+.panel.only canvas { height: 380px; }
+#csvOut { width: 100%; height: 120px; font: 12px var(--mono); margin-top: 8px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; }
+@media (max-width: 820px) {
+  .bench { grid-template-columns: minmax(0, 1fr); }
+  .plots { order: -1; }
+  canvas { height: 200px; }
+  .panel.only canvas { height: 280px; }
+}
+img { max-width: 100%; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Flight Data Explorer</h1>
+  <p>Flight logs and other sensor data as layers on one time axis, with fits and interpolation.</p>
+</header>
+
+<div class="bench">
+  <div class="rail">
+    <section>
+      <h2>Files and layers</h2>
+      <div class="bar">
+        <button class="primary" id="addFiles" type="button">Add files</button>
+        <input id="fileInput" type="file" multiple accept=".csv,.txt,text/csv,text/plain" hidden>
+        <span class="muted" style="margin:0">from this computer, or drop them on the page</span>
+      </div>
+      <p class="muted" id="loadNote">Reads pyro flight logs, AltOS logs, and any CSV with a time column.</p>
+      <div class="repo">
+        <div class="bar">
+          <label for="repoName" class="muted" style="margin:0">Repository</label>
+          <input id="repoName" type="text" style="flex:1" spellcheck="false">
+        </div>
+        <div class="bar">
+          <label for="repoBranch" class="muted" style="margin:0">Branch</label>
+          <input id="repoBranch" type="text" style="flex:1" value="main" spellcheck="false">
+          <button id="repoList" type="button">List data files</button>
+        </div>
+        <input id="repoFilter" type="text" placeholder="Narrow the list, for example altos" aria-label="Narrow the list of repository files">
+        <select id="repoFiles" multiple size="6" aria-label="CSV files in the repository"></select>
+        <div class="bar">
+          <button id="repoAdd" type="button">Add selected</button>
+          <span class="muted" id="repoNote" style="margin:0"></span>
+        </div>
+      </div>
+      <div id="files" style="margin-top:10px"></div>
+      <div id="derived"></div>
+    </section>
+
+    <section>
+      <h2>Fit and interpolate</h2>
+      <div class="tool">
+        <label for="toolSource">Layer</label>
+        <select id="toolSource"></select>
+        <label for="toolKind">Tool</label>
+        <select id="toolKind">
+          <option value="poly">Polynomial fit</option>
+          <option value="local">Sliding fit (smooth, or rate of change)</option>
+          <option value="median">Moving median</option>
+          <option value="mean">Moving average</option>
+          <option value="interp">Interpolate to even steps</option>
+          <option value="diff">Difference from another layer</option>
+        </select>
+        <label for="pOrder" data-for="poly local">Order</label>
+        <input id="pOrder" type="number" min="1" max="6" step="1" value="2" data-for="poly local">
+        <label for="pExtend" data-for="poly">Extend, s</label>
+        <input id="pExtend" type="number" min="0" step="0.1" value="0" data-for="poly">
+        <label for="pWindow" data-for="local median mean">Window, s</label>
+        <input id="pWindow" type="number" min="0.02" step="0.05" value="0.5" data-for="local median mean">
+        <label for="pOutput" data-for="local">Output</label>
+        <select id="pOutput" data-for="local">
+          <option value="0">Smoothed value</option>
+          <option value="1">Rate of change, per s</option>
+          <option value="2">Second derivative, per s²</option>
+        </select>
+        <label for="pMethod" data-for="interp">Method</label>
+        <select id="pMethod" data-for="interp">
+          <option value="linear">Straight lines between readings</option>
+          <option value="spline">Cubic spline through readings</option>
+          <option value="hold">Hold the last reading</option>
+        </select>
+        <label for="pStep" data-for="interp">Step, ms</label>
+        <input id="pStep" type="number" min="1" step="1" value="5" data-for="interp">
+        <label for="pOther" data-for="diff">Minus</label>
+        <select id="pOther" data-for="diff"></select>
+        <div class="go">
+          <button class="primary" id="toolRun" type="button">Add as a layer</button>
+          <span class="muted" style="margin:0">Uses the readings in the span shown.</span>
+        </div>
+      </div>
+      <p class="muted" id="toolNote"></p>
+    </section>
+
+    <section>
+      <h2>Events</h2>
+      <div class="sources" id="eventSources"></div>
+      <div class="sources">
+        <label for="eventText" class="muted" style="margin:0">Name contains</label>
+        <input id="eventText" type="text" placeholder="APOGEE, count" style="flex:1" title="One or more words, separated by commas. An event is listed when its name contains any of them.">
+      </div>
+      <div class="events" id="events"></div>
+      <p class="muted">Select an event to show the second each side of it.</p>
+    </section>
+  </div>
+
+  <div class="plots">
+    <section>
+      <div class="bar">
+        <button id="panLeft" type="button" title="Earlier">◀</button>
+        <button id="panRight" type="button" title="Later">▶</button>
+        <button id="zoomIn" type="button">Zoom in</button>
+        <button id="zoomOut" type="button">Zoom out</button>
+        <button id="whole" type="button">Whole flight</button>
+        <button id="copyCsv" type="button">Copy shown span as CSV</button>
+        <span class="span" id="spanText"></span>
+      </div>
+      <p class="muted">Drag across a plot to zoom into that span. Scroll to zoom about the pointer. Shift-drag to move along the flight. Double-click for the whole flight.</p>
+      <div class="readout" id="readout"></div>
+      <textarea id="csvOut" hidden readonly aria-label="Shown span as CSV"></textarea>
+    </section>
+    <div id="panels" class="stack"></div>
+    <p class="muted" style="margin:0">Time is in seconds from each file's own zero: T+0 in a pyro log, boost detection in an AltOS log. Shift a file to line it up with another.</p>
+  </div>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const el = (tag, props, ...kids) => {
+  const e = Object.assign(document.createElement(tag), props || {});
+  for (const k of kids) e.append(k);
+  return e;
+};
+
+/* ── State ─────────────────────────────────────────────────────────── */
+let files = [];      // {id, name, shift, events:[{t,name,log}], layers:[]}
+let layers = [];     // {id, file, name, unit, t[], v[], on, slot, step, derived, note}
+let view = null;     // [t0, t1] shown, or null for everything
+let pointerT = null;
+let drag = null;
+let nextId = 1;
+let panels = [];     // {unit, canvas, layers}
+
+const ML = 64, MR = 14, MB = 22;
+const UNIT_TITLES = { 'm': 'Height, m', 'Pa': 'Pressure, Pa', 'm/s': 'Speed, m/s', 'm/s²': 'Acceleration, m/s²', '°C': 'Temperature, °C' };
+
+/* ── Reading files ─────────────────────────────────────────────────── */
+const series = () => ({ t: [], v: [] });
+function put(s, t, v) { if (isFinite(t) && isFinite(v)) { s.t.push(t); s.v.push(v); } }
+function inTimeOrder(s) {
+  let sorted = true;
+  for (let i = 1; i < s.t.length; i++) if (s.t[i] < s.t[i - 1]) { sorted = false; break; }
+  if (sorted) return s;
+  const idx = s.t.map((_, i) => i).sort((a, b) => s.t[a] - s.t[b]);
+  return { t: idx.map(i => s.t[i]), v: idx.map(i => s.v[i]) };
+}
+
+/* The raw reading as a height: the filtered height moved by the pressure
+   difference, at the log's own metres per pascal. */
+function rawHeightCm(altCm, pa, rawPa, groundPa) {
+  const slope = Math.abs(groundPa - pa) > 200 ? altCm / (groundPa - pa) : 843000 / (groundPa || 101325);
+  return altCm + (pa - rawPa) * slope;
+}
+
+function readPyro(lines) {
+  const c = { rh: series(), fh: series(), rp: series(), fp: series(), temp: series(), thrust: series(), state: series() };
+  const est = {}, events = [];
+  let ground = 0, col = null;
+  for (const line of lines) {
+    if (line[0] === '#') { const m = line.match(/^# Ground Pa:\s*(\d+)/); if (m) ground = +m[1]; continue; }
+    const f = line.split(',');
+    if (!col) { col = {}; f.forEach((n, i) => { col[n.trim()] = i; }); continue; }
+    const t = +f[col.time_ms] / 1000;
+    if (!isFinite(t) || f[col.time_ms] === '') continue;
+    const sample = f[col.pressure_pa] !== undefined && f[col.pressure_pa] !== '';
+    if (sample) {
+      const pa = +f[col.pressure_pa], alt = +f[col.altitude_cm], raw = f[col.raw_pa] === '' ? NaN : +f[col.raw_pa];
+      put(c.fh, t, alt / 100); put(c.fp, t, pa);
+      if (isFinite(raw)) { put(c.rp, t, raw); put(c.rh, t, rawHeightCm(alt, pa, raw, ground) / 100); }
+      if (f[col.temp_c] !== '') put(c.temp, t, +f[col.temp_c]);
+      put(c.thrust, t, +f[col.thrust]); put(c.state, t, +f[col.state]);
+    }
+    const ev = f.slice(col.event).join(',').trim();
+    if (ev) {
+      const m = ev.match(/^EST (\w+) cm=(-?\d+) cm\/s=(-?\d+)/);
+      if (m) {
+        est[m[1]] = est[m[1]] || { h: series(), s: series() };
+        put(est[m[1]].h, t, +m[2] / 100); put(est[m[1]].s, t, +m[3] / 100);
+      }
+      events.push({ t, name: ev, log: !sample || /^(LOG|LUA|EST)\b/.test(ev) });
+    }
+  }
+  const out = [
+    { name: 'Height, raw reading', unit: 'm', s: c.rh, on: true },
+    { name: 'Height, Kalman filter', unit: 'm', s: c.fh, on: true },
+    { name: 'Pressure, raw reading', unit: 'Pa', s: c.rp },
+    { name: 'Pressure, Kalman filter', unit: 'Pa', s: c.fp },
+    { name: 'Temperature', unit: '°C', s: c.temp },
+    { name: 'Thrust flag', unit: 'flag', s: c.thrust, step: true },
+    { name: 'Flight state', unit: 'state', s: c.state, step: true },
+  ];
+  for (const n of Object.keys(est)) {
+    out.push({ name: `Height, ${n} filter, one row a second`, unit: 'm', s: est[n].h });
+    out.push({ name: `Speed, ${n} filter, one row a second`, unit: 'm/s', s: est[n].s });
+  }
+  return { kind: 'pyro flight log', layers: out, events };
+}
+
+const ALTOS = [
+  ['height', 'Height, barometer', 'm', true], ['pressure', 'Pressure', 'Pa'],
+  ['acceleration', 'Acceleration, accelerometer', 'm/s²'], ['accel_speed', 'Speed, accelerometer', 'm/s'],
+  ['baro_speed', 'Speed, barometer', 'm/s'], ['temperature', 'Temperature', '°C'],
+];
+function readAltos(lines) {
+  const head = lines.find(l => l.startsWith('#version,')).slice(1).split(',').map(s => s.trim());
+  const at = n => head.indexOf(n);
+  const tc = at('time'), sc = at('state_name');
+  const chans = ALTOS.filter(a => at(a[0]) >= 0).map(a => ({ name: a[1], unit: a[2], on: !!a[3], s: series(), c: at(a[0]) }));
+  const events = [];
+  let lastT = -Infinity, lastState = '';
+  for (const line of lines) {
+    if (line[0] === '#') continue;
+    const f = line.split(',');
+    const t = parseFloat(f[tc]);
+    if (!isFinite(t) || t <= lastT) continue;
+    lastT = t;
+    for (const ch of chans) { const v = parseFloat(f[ch.c]); if (Math.abs(v) < 2e9) put(ch.s, t, v); }
+    const st = (f[sc] || '').trim();
+    if (st && st !== lastState) { if (lastState) events.push({ t, name: st.toUpperCase(), log: false }); lastState = st; }
+  }
+  return { kind: 'AltOS log', layers: chans, events };
+}
+
+function guessUnit(name) {
+  const n = name.toLowerCase();
+  if (/_cm$/.test(n)) return ['m', 0.01];
+  if (/(^|_)pa$|press/.test(n)) return ['Pa', 1];
+  if (/speed|vel/.test(n)) return ['m/s', 1];
+  if (/acc/.test(n)) return ['m/s²', 1];
+  if (/temp|_c$/.test(n)) return ['°C', 1];
+  if (/height|alt|_m$/.test(n)) return ['m', 1];
+  return [name, 1];
+}
+/* A column named "Altitude (ft)" is Altitude, in ft. */
+function namedColumn(text, i) {
+  const m = text.match(/^(.*?)\s*\(([^)]+)\)$/);
+  if (m) return { name: m[1] || `column ${i + 1}`, unit: m[2], k: 1, bracketed: true };
+  const [unit, k] = guessUnit(text);
+  return { name: text || `column ${i + 1}`, unit, k };
+}
+function readTable(lines) {
+  const cells = l => l.split(/[,;\t]/).map(s => s.trim());
+  const numbers = r => r.every(c => c === '' || isFinite(Number(c)));
+  const rows = lines.filter(l => l.trim() && l[0] !== '#').map(cells);
+  if (!rows.length) throw new Error('no rows of data');
+  let head;
+  if (numbers(rows[0])) {
+    /* The names are in the last comment line with as many fields as a row. */
+    const named = lines.filter(l => l[0] === '#').map(l => cells(l.replace(/^#\s*/, '')))
+      .filter(r => r.length === rows[0].length && r.length > 1 && !numbers(r));
+    head = named.length ? named[named.length - 1] : rows[0].map((_, i) => (i ? `column ${i + 1}` : 'time'));
+  } else head = rows.shift();
+  const cols = head.map(namedColumn);
+  let tc = cols.findIndex(c => /^(time|t)([ _]|$)/i.test(c.name));
+  if (tc < 0) tc = 0;
+  const tunit = cols[tc].bracketed ? cols[tc].unit : (cols[tc].name.match(/_(ms|us|s)$/i) || [])[1] || 's';
+  const scale = /^ms$/i.test(tunit) ? 1e-3 : /^us$/i.test(tunit) ? 1e-6 : 1;
+  const ec = cols.findIndex(c => /^event/i.test(c.name));
+  const chans = [], events = [];
+  cols.forEach((c, i) => { if (i !== tc && i !== ec) chans.push({ ...c, s: series(), c: i }); });
+  for (const r of rows) {
+    const t = Number(r[tc]) * scale;
+    if (r[tc] === '' || !isFinite(t)) continue;
+    for (const ch of chans) if (r[ch.c] !== '' && r[ch.c] !== undefined) put(ch.s, t, Number(r[ch.c]) * ch.k);
+    if (ec >= 0 && r[ec]) events.push({ t, name: r[ec], log: false });
+  }
+  for (const l of lines) {
+    const m = l.match(/^#\s*Event (\S+) occurred at t=([\d.eE+-]+)/);
+    if (m) events.push({ t: Number(m[2]), name: m[1], log: false });
+  }
+  const kept = chans.filter(ch => ch.s.t.length > 1);
+  if (!kept.length) throw new Error('no columns of numbers against time');
+  kept[0].on = true;
+  return { kind: 'table', layers: kept, events };
+}
+
+function addFile(name, text) {
+  const lines = text.split(/\r?\n/);
+  let read;
+  if (lines.some(l => l.startsWith('#version,'))) read = readAltos(lines);
+  else if (lines.some(l => /^time_ms,.*altitude_cm.*raw_pa/.test(l))) read = readPyro(lines);
+  else read = readTable(lines);
+  const file = { id: nextId++, name, kind: read.kind, shift: 0, events: read.events.sort((a, b) => a.t - b.t), layers: [] };
+  for (const ch of read.layers) {
+    if (ch.s.t.length < 2) continue;
+    const s = inTimeOrder(ch.s);
+    const L = { id: nextId++, file, name: ch.name, unit: ch.unit, t: s.t, v: s.v, on: false, slot: -1, step: !!ch.step };
+    file.layers.push(L); layers.push(L);
+    if (ch.on) turnOn(L);
+  }
+  files.push(file);
+  return file;
+}
+
+/* A layer keeps the colour it is first given. */
+function turnOn(L) {
+  L.on = true;
+  if (L.slot >= 0) return;
+  const used = layers.filter(x => x.slot >= 0).map(x => x.slot);
+  let slot = 0;
+  while (used.includes(slot)) slot++;
+  L.slot = slot;
+}
+const colourOf = L => getComputedStyle(document.documentElement).getPropertyValue(`--s${(L.slot % 8) + 1}`).trim();
+const dashed = L => L.slot >= 8;
+
+/* ── Time and values ───────────────────────────────────────────────── */
+const shiftOf = L => (L.file ? L.file.shift : 0);
+const T = (L, i) => L.t[i] + shiftOf(L);
+function firstFrom(L, t) {
+  t -= shiftOf(L);
+  let lo = 0, hi = L.t.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (L.t[m] < t) lo = m + 1; else hi = m; }
+  return lo;
+}
+function valueAt(L, t) {
+  const n = L.t.length, i = firstFrom(L, t);
+  if (i < n && T(L, i) === t) return L.v[i];
+  if (i === 0 || i === n) return null;
+  if (L.step) return L.v[i - 1];
+  const a = T(L, i - 1), b = T(L, i);
+  return L.v[i - 1] + (L.v[i] - L.v[i - 1]) * (t - a) / (b - a);
+}
+function everything() {
+  let lo = Infinity, hi = -Infinity;
+  for (const L of layers) if (L.on && L.t.length) { lo = Math.min(lo, T(L, 0)); hi = Math.max(hi, T(L, L.t.length - 1)); }
+  return isFinite(lo) && hi > lo ? [lo, hi] : [0, 1];
+}
+const shown = () => view || everything();
+function show(t0, t1) {
+  if (t1 - t0 < 0.01) { const m = (t0 + t1) / 2; t0 = m - 0.005; t1 = m + 0.005; }
+  view = [t0, t1];
+  draw();
+}
+function readingsShown(L) {
+  const [t0, t1] = shown(), a = firstFrom(L, t0), b = firstFrom(L, t1 + 1e-9);
+  const ts = [], vs = [];
+  for (let i = a; i < b; i++) { ts.push(T(L, i)); vs.push(L.v[i]); }
+  return { ts, vs };
+}
+
+/* ── Fitting and interpolation ─────────────────────────────────────── */
+/* Least squares polynomial about tc; coefficients in real units,
+   value = c[0] + c[1](t-tc) + c[2](t-tc)^2 ... */
+function polyfit(ts, vs, order, tc) {
+  const n = order + 1;
+  let h = 0;
+  for (const t of ts) h = Math.max(h, Math.abs(t - tc));
+  h = h || 1;
+  const A = Array.from({ length: n }, () => new Float64Array(n + 1));
+  for (let k = 0; k < ts.length; k++) {
+    const x = (ts[k] - tc) / h, p = [1];
+    for (let i = 1; i < 2 * n - 1; i++) p.push(p[i - 1] * x);
+    for (let i = 0; i < n; i++) { for (let j = 0; j < n; j++) A[i][j] += p[i + j]; A[i][n] += vs[k] * p[i]; }
+  }
+  for (let i = 0; i < n; i++) {
+    let best = i;
+    for (let r = i + 1; r < n; r++) if (Math.abs(A[r][i]) > Math.abs(A[best][i])) best = r;
+    [A[i], A[best]] = [A[best], A[i]];
+    if (Math.abs(A[i][i]) < 1e-12) return null;
+    for (let r = 0; r < n; r++) {
+      if (r === i) continue;
+      const f = A[r][i] / A[i][i];
+      for (let j = i; j <= n; j++) A[r][j] -= f * A[i][j];
+    }
+  }
+  const c = [];
+  for (let i = 0; i < n; i++) c.push(A[i][n] / A[i][i] / Math.pow(h, i));
+  return c;
+}
+const polyval = (c, x) => c.reduceRight((acc, k) => acc * x + k, 0);
+const num = v => (Math.abs(v) >= 1000 || (Math.abs(v) < 0.01 && v !== 0) ? v.toExponential(3) : v.toFixed(3));
+
+function fitPolynomial(L, order, extend) {
+  const { ts, vs } = readingsShown(L);
+  if (ts.length < order + 2) throw new Error(`An order ${order} fit needs at least ${order + 2} readings in the span shown.`);
+  const tc = (ts[0] + ts[ts.length - 1]) / 2, c = polyfit(ts, vs, order, tc);
+  if (!c) throw new Error('The readings in the span shown do not determine that fit.');
+  let ss = 0;
+  ts.forEach((t, i) => { ss += (vs[i] - polyval(c, t - tc)) ** 2; });
+  const a = ts[0] - extend, b = ts[ts.length - 1] + extend, t = [], v = [];
+  for (let i = 0; i <= 240; i++) { const x = a + (b - a) * i / 240; t.push(x); v.push(polyval(c, x - tc)); }
+  let note = `${L.unit} = ` + c.map((k, i) => num(k) + (i ? `·(t−${tc.toFixed(3)})` + (i > 1 ? `^${i}` : '') : '')).join(' + ');
+  note += `; rms error ${num(Math.sqrt(ss / ts.length))} ${L.unit} over ${ts.length} readings`;
+  if (order === 1) note += `; slope ${num(c[1])} ${L.unit}/s`;
+  if (order === 2 && c[2] !== 0) {
+    const tv = tc - c[1] / (2 * c[2]);
+    note += `; ${c[2] < 0 ? 'top' : 'bottom'} ${num(polyval(c, tv - tc))} ${L.unit} at ${tv.toFixed(3)} s`;
+  }
+  return { name: `Order ${order} fit of ${L.name}, ${ts[0].toFixed(2)} to ${ts[ts.length - 1].toFixed(2)} s`, unit: L.unit, t, v, note };
+}
+
+function windowed(L, width, each) {
+  const { ts, vs } = readingsShown(L), t = [], v = [];
+  let a = 0, b = 0;
+  for (let i = 0; i < ts.length; i++) {
+    while (ts[a] < ts[i] - width / 2) a++;
+    while (b < ts.length && ts[b] <= ts[i] + width / 2) b++;
+    const r = each(ts.slice(a, b), vs.slice(a, b), ts[i]);
+    if (r !== null && isFinite(r)) { t.push(ts[i]); v.push(r); }
+  }
+  if (t.length < 2) throw new Error('The span shown holds too few readings for that window.');
+  return { t, v };
+}
+function slidingFit(L, order, width, derivative) {
+  if (derivative > order) throw new Error(`An order ${order} fit has no ${derivative === 2 ? 'second derivative' : 'rate'}; raise the order.`);
+  const r = windowed(L, width, (ts, vs, tc) => {
+    if (ts.length < order + 2) return null;
+    const c = polyfit(ts, vs, order, tc);
+    return c ? c[derivative] * (derivative === 2 ? 2 : 1) : null;
+  });
+  const what = ['Smoothed', 'Rate of change of', 'Second derivative of'][derivative];
+  const unit = L.unit + ['', '/s', '/s²'][derivative];
+  return { name: `${what} ${L.name}`, unit: unit === 'm/s/s' ? 'm/s²' : unit, ...r, note: `order ${order} fit over ${width} s about each reading` };
+}
+function movingMedian(L, width) {
+  const r = windowed(L, width, (ts, vs) => { const s = vs.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; });
+  return { name: `Median of ${L.name}`, unit: L.unit, ...r, note: `over ${width} s about each reading` };
+}
+function movingAverage(L, width) {
+  const r = windowed(L, width, (ts, vs) => vs.reduce((a, b) => a + b, 0) / vs.length);
+  return { name: `Average of ${L.name}`, unit: L.unit, ...r, note: `over ${width} s about each reading` };
+}
+
+/* Natural cubic spline second derivatives. */
+function splineCurvature(x, y) {
+  const n = x.length, m = new Float64Array(n), u = new Float64Array(n);
+  for (let i = 1; i < n - 1; i++) {
+    const sig = (x[i] - x[i - 1]) / (x[i + 1] - x[i - 1]), p = sig * m[i - 1] + 2;
+    m[i] = (sig - 1) / p;
+    u[i] = (y[i + 1] - y[i]) / (x[i + 1] - x[i]) - (y[i] - y[i - 1]) / (x[i] - x[i - 1]);
+    u[i] = (6 * u[i] / (x[i + 1] - x[i - 1]) - sig * u[i - 1]) / p;
+  }
+  for (let k = n - 2; k >= 0; k--) m[k] = m[k] * m[k + 1] + u[k];
+  return m;
+}
+function interpolate(L, method, stepS) {
+  const r = readingsShown(L), x = [], y = [];
+  r.ts.forEach((t, i) => { if (!x.length || t > x[x.length - 1]) { x.push(t); y.push(r.vs[i]); } });
+  if (x.length < 3) throw new Error('Interpolation needs at least 3 readings in the span shown.');
+  const count = Math.floor((x[x.length - 1] - x[0]) / stepS);
+  if (count > 200000) throw new Error('That step gives more than 200,000 points; show a shorter span or use a longer step.');
+  const m = method === 'spline' ? splineCurvature(x, y) : null, t = [], v = [];
+  let k = 0;
+  for (let i = 0; i <= count; i++) {
+    const q = x[0] + i * stepS;
+    while (k < x.length - 2 && x[k + 1] <= q) k++;
+    const h = x[k + 1] - x[k], a = (x[k + 1] - q) / h, b = (q - x[k]) / h;
+    let val;
+    if (method === 'hold') val = q >= x[k + 1] ? y[k + 1] : y[k];
+    else if (method === 'linear') val = a * y[k] + b * y[k + 1];
+    else val = a * y[k] + b * y[k + 1] + ((a * a * a - a) * m[k] + (b * b * b - b) * m[k + 1]) * h * h / 6;
+    t.push(q); v.push(val);
+  }
+  const how = { linear: 'straight lines', spline: 'cubic spline', hold: 'last reading held' }[method];
+  return { name: `${L.name}, every ${stepS * 1000} ms`, unit: L.unit, t, v, note: `${how}; ${x.length} readings to ${t.length} points`, step: method === 'hold' };
+}
+function difference(L, other) {
+  const { ts, vs } = readingsShown(L), t = [], v = [];
+  ts.forEach((x, i) => { const o = valueAt(other, x); if (o !== null) { t.push(x); v.push(vs[i] - o); } });
+  if (t.length < 2) throw new Error('The two layers do not overlap in the span shown.');
+  let ss = 0, worst = 0;
+  for (const d of v) { ss += d * d; if (Math.abs(d) > Math.abs(worst)) worst = d; }
+  return { name: `${L.name} minus ${other.name}`, unit: L.unit, t, v, note: `rms ${num(Math.sqrt(ss / v.length))} ${L.unit}, largest ${num(worst)} ${L.unit}` };
+}
+
+function runTool() {
+  const L = layers.find(x => x.id === +$('toolSource').value);
+  const order = Math.max(1, Math.min(6, Math.round(+$('pOrder').value || 1))), width = +$('pWindow').value;
+  try {
+    if (!L) throw new Error('Add a file first.');
+    const kind = $('toolKind').value;
+    let r;
+    if (kind === 'poly') r = fitPolynomial(L, order, Math.max(0, +$('pExtend').value || 0));
+    else if (kind === 'local') r = slidingFit(L, order, width, +$('pOutput').value);
+    else if (kind === 'median') r = movingMedian(L, width);
+    else if (kind === 'mean') r = movingAverage(L, width);
+    else if (kind === 'interp') r = interpolate(L, $('pMethod').value, Math.max(1, +$('pStep').value || 1) / 1000);
+    else {
+      const other = layers.find(x => x.id === +$('pOther').value);
+      if (!other || other === L) throw new Error('Choose a second, different layer.');
+      r = difference(L, other);
+    }
+    const D = { id: nextId++, file: null, derived: true, on: false, slot: -1, step: !!r.step, ...r };
+    layers.push(D); turnOn(D);
+    $('toolNote').textContent = `Added: ${D.name}. ${D.note}`;
+    $('toolNote').style.color = '';
+    rebuild();
+  } catch (e) {
+    $('toolNote').textContent = e.message;
+    $('toolNote').style.color = 'var(--warn)';
+  }
+}
+
+/* ── Which events are listed and marked ────────────────────────────── */
+const SOURCES = [['flight', 'Flight events'], ['lua', 'Lua script'], ['est', 'Estimators'], ['log', 'Log records']];
+const sourceOn = { flight: true, lua: false, est: false, log: false };
+const sourceOf = name => (/^LUA\b/.test(name) ? 'lua' : /^EST\b/.test(name) ? 'est' : /^LOG\b/.test(name) ? 'log' : 'flight');
+function eventListed(e) {
+  if (!sourceOn[sourceOf(e.name)]) return false;
+  const words = $('eventText').value.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+  return !words.length || words.some(w => e.name.toLowerCase().includes(w));
+}
+
+/* ── The rail ──────────────────────────────────────────────────────── */
+function layerRow(L) {
+  const box = el('input', { type: 'checkbox', id: `on${L.id}`, checked: L.on });
+  box.onchange = () => { if (box.checked) turnOn(L); else L.on = false; rebuild(); };
+  const sw = el('span', { className: 'swatch' });
+  if (L.on) sw.style.background = colourOf(L);
+  const unit = el('input', { type: 'text', className: 'unit', id: `unit${L.id}`, value: L.unit, title: 'Unit. Layers with the same unit share a plot.' });
+  unit.setAttribute('aria-label', `Unit of ${L.name}`);
+  unit.onchange = () => { L.unit = unit.value.trim() || L.unit; rebuild(); };
+  const row = el('div', { className: 'layer' }, box, sw, el('label', { htmlFor: `on${L.id}`, textContent: L.name }));
+  if (L.derived) {
+    const x = el('button', { className: 'x', type: 'button', textContent: '×', title: 'Remove this layer' });
+    x.onclick = () => { layers = layers.filter(k => k !== L); rebuild(); };
+    row.append(el('span', { style: 'display:flex;gap:4px' }, unit, x), el('div', { className: 'note', textContent: L.note }));
+  } else row.append(unit);
+  return row;
+}
+function drawRail() {
+  const box = $('files');
+  box.replaceChildren();
+  for (const f of files) {
+    const x = el('button', { className: 'x', type: 'button', textContent: '×', title: 'Remove this file' });
+    x.onclick = () => { files = files.filter(k => k !== f); layers = layers.filter(L => L.file !== f); view = null; rebuild(); };
+    const shift = el('input', { type: 'number', step: '0.01', value: f.shift, id: `shift${f.id}` });
+    shift.onchange = () => { f.shift = +shift.value || 0; rebuild(); };
+    box.append(el('div', { className: 'file' },
+      el('div', { className: 'filehead' }, el('span', { className: 'filename', textContent: f.name }), x),
+      el('div', { className: 'shift' }, el('span', { textContent: f.kind + ' ·' }), el('label', { htmlFor: `shift${f.id}`, textContent: 'shift, s' }), shift),
+      ...f.layers.map(layerRow)));
+  }
+  const derived = layers.filter(L => L.derived), d = $('derived');
+  d.replaceChildren();
+  if (derived.length) d.append(el('div', { className: 'file' }, el('div', { className: 'filehead' }, el('span', { className: 'filename', textContent: 'Fits and derived layers' })), ...derived.map(layerRow)));
+
+  for (const id of ['toolSource', 'pOther']) {
+    const sel = $(id), keep = sel.value;
+    sel.replaceChildren(...layers.map(L => el('option', { value: L.id, textContent: (L.file && files.length > 1 ? L.file.name + ': ' : '') + L.name })));
+    if (layers.some(L => String(L.id) === keep)) sel.value = keep;
+    else { const first = layers.find(L => L.on); if (first) sel.value = first.id; }
+  }
+
+  const counts = {};
+  for (const f of files) for (const e of f.events) { const s = sourceOf(e.name); counts[s] = (counts[s] || 0) + 1; }
+  $('eventSources').replaceChildren(...SOURCES.filter(([s]) => counts[s]).map(([s, title]) => {
+    const box = el('input', { type: 'checkbox', id: `src_${s}`, checked: sourceOn[s] });
+    box.onchange = () => { sourceOn[s] = box.checked; drawRail(); draw(); };
+    return el('label', { htmlFor: `src_${s}` }, box, title, el('span', { className: 'count', textContent: counts[s] }));
+  }));
+  const ev = $('events'), all = [];
+  for (const f of files) for (const e of f.events) if (eventListed(e)) all.push({ t: e.t + f.shift, name: e.name, log: e.log, file: f });
+  all.sort((a, b) => a.t - b.t);
+  ev.replaceChildren(...all.map(e => {
+    const b = el('button', { type: 'button', className: e.log ? 'log' : '' },
+      el('span', { textContent: e.t.toFixed(3) + ' s' }), el('span', { textContent: e.name + (files.length > 1 ? ` · ${e.file.name}` : '') }));
+    b.onclick = () => show(e.t - 1, e.t + 1);
+    return b;
+  }));
+  if (!all.length) ev.append(el('span', { className: 'muted', textContent: 'No events match the sources ticked and the name given.' }));
+}
+function showToolFields() {
+  const kind = $('toolKind').value;
+  document.querySelectorAll('.tool [data-for]').forEach(e => { e.hidden = !e.dataset.for.split(' ').includes(kind); });
+}
+
+/* ── The plots ─────────────────────────────────────────────────────── */
+function buildPanels() {
+  const units = [];
+  for (const L of layers) if (L.on && !units.includes(L.unit)) units.push(L.unit);
+  const box = $('panels');
+  box.replaceChildren();
+  panels = units.map(unit => {
+    const canvas = el('canvas');
+    canvas.setAttribute('role', 'img');
+    canvas.setAttribute('aria-label', `${UNIT_TITLES[unit] || unit} against time`);
+    watch(canvas);
+    box.append(el('section', { className: 'panel' + (units.length === 1 ? ' only' : '') }, el('h3', { textContent: UNIT_TITLES[unit] || unit }), canvas));
+    return { unit, canvas };
+  });
+  if (!panels.length) box.append(el('section', {}, el('p', { className: 'muted', style: 'margin:0', textContent: files.length ? 'Tick a layer to plot it.' : 'Add a flight log from this computer or from the repository to plot it.' })));
+}
+function rebuild() { drawRail(); buildPanels(); draw(); }
+
+function tickStep(span, want) {
+  const raw = span / want, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+  return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * p;
+}
+const tickText = (v, step) => v.toFixed(Math.max(0, Math.min(6, -Math.floor(Math.log10(step) + 1e-9))));
+
+function drawPanel(P, first) {
+  const cv = P.canvas, w = cv.clientWidth, h = cv.clientHeight, d = window.devicePixelRatio || 1;
+  if (!w) return;
+  if (cv.width !== Math.round(w * d) || cv.height !== Math.round(h * d)) { cv.width = Math.round(w * d); cv.height = Math.round(h * d); }
+  const css = getComputedStyle(document.documentElement), tok = n => css.getPropertyValue(n).trim();
+  const g = cv.getContext('2d');
+  g.setTransform(d, 0, 0, d, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const [t0, t1] = shown(), MT = first ? 44 : 10;
+  const x0 = ML, x1 = w - MR, y0 = MT, y1 = h - MB;
+  const X = t => x0 + (t - t0) / (t1 - t0) * (x1 - x0);
+  const mine = layers.filter(L => L.on && L.unit === P.unit);
+
+  let lo = Infinity, hi = -Infinity;
+  for (const L of mine) {
+    const a = Math.max(0, firstFrom(L, t0) - 1), b = Math.min(L.t.length, firstFrom(L, t1) + 1);
+    for (let i = a; i < b; i++) { if (L.v[i] < lo) lo = L.v[i]; if (L.v[i] > hi) hi = L.v[i]; }
+  }
+  if (!isFinite(lo)) { lo = 0; hi = 1; }
+  if (hi - lo < 1e-9) { lo -= 0.5; hi += 0.5; }
+  const pad = (hi - lo) * 0.06;
+  lo -= pad; hi += pad;
+  const Y = v => y1 - (v - lo) / (hi - lo) * (y1 - y0);
+
+  g.font = '11px ' + tok('--font');
+  g.lineWidth = 1;
+  g.textBaseline = 'middle';
+  const ys = tickStep(hi - lo, Math.max(3, (y1 - y0) / 40));
+  for (let v = Math.ceil(lo / ys) * ys; v <= hi; v += ys) {
+    const y = Math.round(Y(v)) + 0.5;
+    g.strokeStyle = tok('--grid'); g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+    g.fillStyle = tok('--ink2'); g.textAlign = 'right'; g.fillText(tickText(v, ys), x0 - 6, y);
+  }
+  const xs = tickStep(t1 - t0, Math.max(3, (x1 - x0) / 90));
+  g.textBaseline = 'top'; g.textAlign = 'center';
+  for (let t = Math.ceil(t0 / xs) * xs; t <= t1 + 1e-9; t += xs) {
+    const x = Math.round(X(t)) + 0.5;
+    g.strokeStyle = tok('--grid'); g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke();
+    g.fillStyle = tok('--ink2'); g.fillText(tickText(t, xs) + ' s', x, y1 + 5);
+  }
+  g.strokeStyle = tok('--line'); g.strokeRect(x0 + 0.5, y0 + 0.5, x1 - x0 - 1, y1 - y0 - 1);
+
+  /* Events: a rule down every plot, the name on the first. */
+  const rowEnd = [-Infinity, -Infinity, -Infinity];
+  g.textBaseline = 'alphabetic'; g.textAlign = 'left';
+  for (const f of files) for (const e of f.events) {
+    const t = e.t + f.shift;
+    if (t < t0 || t > t1 || !eventListed(e)) continue;
+    const x = Math.round(X(t)) + 0.5;
+    g.strokeStyle = tok('--event'); g.globalAlpha = e.log ? 0.35 : 0.8;
+    g.setLineDash([4, 3]); g.beginPath(); g.moveTo(x, first ? 4 : y0); g.lineTo(x, y1); g.stroke(); g.setLineDash([]);
+    g.globalAlpha = 1;
+    if (!first) continue;
+    const text = e.name.length > 22 ? e.name.slice(0, 21) + '…' : e.name, tw = g.measureText(text).width;
+    const row = rowEnd.findIndex(end => end < x);
+    if (row < 0) continue;
+    const tx = Math.min(x + 4, w - tw - 2);
+    rowEnd[row] = tx + tw + 8;
+    g.fillStyle = tok('--panel'); g.fillRect(tx - 2, 2 + row * 13, tw + 4, 13);
+    g.fillStyle = e.log ? tok('--ink2') : tok('--ink'); g.fillText(text, tx, 12 + row * 13);
+  }
+
+  g.save();
+  g.beginPath(); g.rect(x0, y0, x1 - x0, y1 - y0); g.clip();
+  for (const L of mine) {
+    const a = Math.max(0, firstFrom(L, t0) - 1), b = Math.min(L.t.length, firstFrom(L, t1) + 1), n = b - a;
+    if (n < 1) continue;
+    const colour = colourOf(L);
+    g.strokeStyle = colour; g.fillStyle = colour; g.lineWidth = L.derived ? 2.25 : 1.5; g.lineJoin = 'round';
+    g.setLineDash(dashed(L) ? [6, 3] : []);
+    g.beginPath();
+    if (n > 3 * (x1 - x0)) {
+      let px = null, mn = 0, mx = 0, last = 0;
+      const flush = () => { g.lineTo(px, Y(mn)); g.lineTo(px, Y(mx)); g.lineTo(px, Y(last)); };
+      for (let i = a; i < b; i++) {
+        const x = Math.round(X(T(L, i))), v = L.v[i];
+        if (x !== px) { if (px !== null) flush(); px = x; mn = mx = v; if (i === a) g.moveTo(x, Y(v)); else g.lineTo(x, Y(v)); }
+        if (v < mn) mn = v; if (v > mx) mx = v; last = v;
+      }
+      flush();
+    } else {
+      for (let i = a; i < b; i++) {
+        const x = X(T(L, i)), y = Y(L.v[i]);
+        if (i === a) g.moveTo(x, y);
+        else { if (L.step) g.lineTo(x, Y(L.v[i - 1])); g.lineTo(x, y); }
+      }
+    }
+    g.stroke(); g.setLineDash([]);
+    if (!L.derived && n * 7 < x1 - x0) for (let i = a; i < b; i++) { g.beginPath(); g.arc(X(T(L, i)), Y(L.v[i]), 2.6, 0, 6.3); g.fill(); }
+  }
+  if (drag && drag.b !== undefined && !drag.pan) {
+    g.fillStyle = tok('--band');
+    g.fillRect(X(Math.min(drag.a, drag.b)), y0, Math.abs(X(drag.b) - X(drag.a)), y1 - y0);
+  }
+  if (pointerT !== null && pointerT >= t0 && pointerT <= t1) {
+    const x = Math.round(X(pointerT)) + 0.5;
+    g.strokeStyle = tok('--ink2'); g.lineWidth = 1; g.beginPath(); g.moveTo(x, y0); g.lineTo(x, y1); g.stroke();
+    for (const L of mine) {
+      const v = valueAt(L, pointerT);
+      if (v === null) continue;
+      g.fillStyle = tok('--panel'); g.beginPath(); g.arc(x, Y(v), 5, 0, 6.3); g.fill();
+      g.fillStyle = colourOf(L); g.beginPath(); g.arc(x, Y(v), 3.2, 0, 6.3); g.fill();
+    }
+  }
+  g.restore();
+}
+
+function draw() {
+  panels.forEach((P, i) => drawPanel(P, i === 0));
+  const [t0, t1] = shown(), [a, b] = everything();
+  $('spanText').textContent = view
+    ? `Showing ${t0.toFixed(3)} s to ${t1.toFixed(3)} s (${(t1 - t0).toFixed(3)} s) of ${a.toFixed(2)} s to ${b.toFixed(2)} s`
+    : `Showing everything, ${a.toFixed(2)} s to ${b.toFixed(2)} s`;
+  drawReadout();
+}
+function drawReadout() {
+  const box = $('readout');
+  if (pointerT === null) {
+    box.replaceChildren(el('span', { className: 'muted', style: 'margin:0', textContent: 'Point at a plot to read every layer at that time.' }));
+    return;
+  }
+  const kids = [el('span', { className: 't', textContent: `t = ${pointerT.toFixed(3)} s` })];
+  for (const L of layers) {
+    if (!L.on) continue;
+    const v = valueAt(L, pointerT), sw = el('span', { className: 'swatch' });
+    sw.style.background = colourOf(L);
+    kids.push(el('span', { className: 'chip' }, sw, el('span', { textContent: `${L.name}: ${v === null ? 'no reading' : num(v) + ' ' + L.unit}` })));
+  }
+  box.replaceChildren(...kids);
+}
+
+function watch(cv) {
+  const timeAt = e => {
+    const r = cv.getBoundingClientRect(), [t0, t1] = shown();
+    return t0 + (e.clientX - r.left - ML) / (r.width - ML - MR) * (t1 - t0);
+  };
+  cv.addEventListener('pointerdown', e => {
+    cv.setPointerCapture(e.pointerId);
+    const [t0, t1] = shown();
+    drag = e.shiftKey || e.button === 1 ? { pan: true, x: e.clientX, t0, t1 } : { a: timeAt(e), x: e.clientX };
+  });
+  cv.addEventListener('pointermove', e => {
+    if (drag && drag.pan) {
+      const r = cv.getBoundingClientRect(), dt = (e.clientX - drag.x) / (r.width - ML - MR) * (drag.t1 - drag.t0);
+      view = [drag.t0 - dt, drag.t1 - dt];
+    } else {
+      pointerT = timeAt(e);
+      if (drag) drag.b = pointerT;
+    }
+    draw();
+  });
+  const end = e => {
+    if (drag && !drag.pan && drag.b !== undefined && Math.abs(e.clientX - drag.x) > 4) {
+      const a = Math.min(drag.a, drag.b), b = Math.max(drag.a, drag.b);
+      drag = null;
+      show(a, b);
+      return;
+    }
+    drag = null;
+    draw();
+  };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', () => { drag = null; draw(); });
+  cv.addEventListener('pointerleave', () => { if (!drag) { pointerT = null; draw(); } });
+  cv.addEventListener('dblclick', () => { view = null; draw(); });
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    const [t0, t1] = shown(), at = timeAt(e);
+    if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      const dt = (e.deltaX || e.deltaY) / 600 * (t1 - t0);
+      show(t0 + dt, t1 + dt);
+    } else {
+      const k = e.deltaY > 0 ? 1.25 : 0.8;
+      show(at - (at - t0) * k, at + (t1 - at) * k);
+    }
+  }, { passive: false });
+}
+
+/* ── Controls ──────────────────────────────────────────────────────── */
+function scale(k) { const [t0, t1] = shown(), m = (t0 + t1) / 2, half = (t1 - t0) / 2 * k; show(m - half, m + half); }
+function slide(dir) { const [t0, t1] = shown(), dt = (t1 - t0) * 0.4 * dir; show(t0 + dt, t1 + dt); }
+$('zoomIn').onclick = () => scale(0.5);
+$('zoomOut').onclick = () => scale(2);
+$('panLeft').onclick = () => slide(-1);
+$('panRight').onclick = () => slide(1);
+$('whole').onclick = () => { view = null; draw(); };
+$('eventText').oninput = () => { drawRail(); draw(); };
+$('toolKind').onchange = showToolFields;
+$('toolRun').onclick = runTool;
+
+$('copyCsv').onclick = () => {
+  const rows = ['layer,unit,time_s,value'];
+  for (const L of layers) {
+    if (!L.on) continue;
+    const { ts, vs } = readingsShown(L), name = '"' + L.name.replace(/"/g, '""') + '"';
+    ts.forEach((t, i) => rows.push(`${name},${L.unit},${t.toFixed(4)},${vs[i]}`));
+  }
+  const text = rows.join('\n'), out = $('csvOut');
+  const fallback = () => { out.hidden = false; out.value = text; out.select(); };
+  const done = () => { $('copyCsv').textContent = 'Copied'; setTimeout(() => { $('copyCsv').textContent = 'Copy shown span as CSV'; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback);
+  else fallback();
+};
+
+const READS = 'Reads pyro flight logs, AltOS logs, and any CSV with a time column.';
+function takeTexts(list) {
+  const bad = [];
+  for (const f of list) {
+    try { addFile(f.name, f.text); } catch (e) { bad.push(`${f.name}: ${e.message}`); }
+  }
+  $('loadNote').textContent = bad.length ? 'Could not read ' + bad.join('; ') + '. A file needs rows of numbers and a time column.' : READS;
+  $('loadNote').style.color = bad.length ? 'var(--warn)' : '';
+  view = null;
+  rebuild();
+}
+async function take(list) {
+  takeTexts(await Promise.all(list.map(async f => ({ name: f.name, text: await f.text() }))));
+}
+
+/* ── Files in the repository ───────────────────────────────────────── */
+let repoPaths = [];
+function repoHere() {
+  const host = location.hostname.match(/^([^.]+)\.github\.io$/), first = location.pathname.split('/')[1];
+  return host && first ? `${host[1]}/${first}` : 'n9wxu/pyro_fw';
+}
+function repoSay(text, wrong) {
+  $('repoNote').textContent = text;
+  $('repoNote').style.color = wrong ? 'var(--warn)' : '';
+}
+function repoNamed() {
+  const repo = $('repoName').value.trim(), branch = $('repoBranch').value.trim() || 'main';
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('Name the repository as owner/name.');
+  if (!/^[\w./-]+$/.test(branch)) throw new Error('That is not a branch name.');
+  return { repo, branch };
+}
+function showRepoPaths() {
+  const words = $('repoFilter').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const listed = repoPaths.filter(p => words.every(w => p.toLowerCase().includes(w)));
+  $('repoFiles').replaceChildren(...listed.map(p => el('option', { value: p, textContent: p })));
+}
+async function listRepo() {
+  try {
+    const { repo, branch } = repoNamed();
+    repoSay('Listing…');
+    const r = await fetch(`https://api.github.com/repos/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+    if (!r.ok) throw new Error(r.status === 404 ? `GitHub has no ${repo} with a branch ${branch}.`
+      : r.status === 403 || r.status === 429 ? 'GitHub has stopped listing for this address for up to an hour.'
+      : `GitHub answered ${r.status}.`);
+    const tree = (await r.json()).tree || [];
+    repoPaths = tree.filter(e => e.type === 'blob' && /\.csv$/i.test(e.path)).map(e => e.path);
+    showRepoPaths();
+    repoSay(`${repoPaths.length} CSV files on ${branch}.`);
+  } catch (e) {
+    repoSay(e instanceof TypeError ? 'GitHub could not be reached. Files on this computer still load.' : e.message, true);
+  }
+}
+async function addFromRepo(paths) {
+  if (!paths.length) { repoSay('Select one or more files in the list first.', true); return; }
+  try {
+    const { repo, branch } = repoNamed();
+    repoSay('Fetching…');
+    const got = await Promise.all(paths.map(async p => {
+      const r = await fetch(`https://raw.githubusercontent.com/${repo}/refs/heads/${branch}/${p.split('/').map(encodeURIComponent).join('/')}`);
+      if (!r.ok) throw new Error(`${p} is not on ${branch} of ${repo}.`);
+      return { name: p.split('/').pop(), text: await r.text() };
+    }));
+    takeTexts(got);
+    repoSay(`Added ${got.length} from ${branch}.`);
+  } catch (e) {
+    repoSay(e instanceof TypeError ? 'GitHub could not be reached. Files on this computer still load.' : e.message, true);
+  }
+}
+$('repoList').onclick = listRepo;
+$('repoFilter').oninput = showRepoPaths;
+$('repoAdd').onclick = () => addFromRepo([...$('repoFiles').selectedOptions].map(o => o.value));
+$('repoFiles').ondblclick = () => $('repoAdd').click();
+
+$('addFiles').onclick = () => $('fileInput').click();
+$('fileInput').onchange = e => { take([...e.target.files]); e.target.value = ''; };
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dropping'); });
+addEventListener('dragleave', () => document.body.classList.remove('dropping'));
+addEventListener('drop', e => { e.preventDefault(); document.body.classList.remove('dropping'); take([...e.dataTransfer.files]); });
+
+new ResizeObserver(() => draw()).observe($('panels'));
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', rebuild);
+new MutationObserver(rebuild).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+/* A link can name the repository's files to open: ?file=test_data/x.csv&file=... */
+const asked = new URLSearchParams(location.search);
+$('repoName').value = asked.get('repo') || repoHere();
+if (asked.get('branch')) $('repoBranch').value = asked.get('branch');
+showToolFields();
+rebuild();
+listRepo();
+if (asked.getAll('file').length) addFromRepo(asked.getAll('file'));
+</script>
+</body>
+</html>

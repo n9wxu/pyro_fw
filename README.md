@@ -160,6 +160,9 @@ no launch or restart removes one (FLT-LOG-12); the **Filesystem** tab lists
 them. **Erase flight logs** removes them all, and the board then prepares
 its flash again (see Preparing for the pad).
 
+To study a flight more closely, open the downloaded CSV in the
+[Flight Data Explorer](#flight-data-explorer).
+
 To send a board's logs and settings to someone else, see
 [Reporting a problem](#reporting-a-problem).
 
@@ -561,7 +564,7 @@ A frame the USB endpoint cannot take yet is held, in 256 bytes, and sent in orde
 
 ## Testing
 
-The host suites (`test/README.md`) and the Playwright web UI suite (`test/web/run_web_tests.sh`) run in CI (`.github/workflows/build.yml`), with cppcheck, clang-format, pmccabe, `support/trace_check.py`, `support/structure_check.py`, `support/wait_check.py`, `support/prove_core0.py` and `support/prove_flight_ram.py`.
+The host suites (`test/README.md`) and the Playwright suites for the web UI, the browser simulator and the flight data explorer (`test/web/run_web_tests.sh`) run in CI (`.github/workflows/build.yml`), with cppcheck, clang-format, pmccabe, `support/trace_check.py`, `support/structure_check.py`, `support/wait_check.py`, `support/prove_core0.py` and `support/prove_flight_ram.py`.
 
 ```bash
 export CI_BUILD=1
@@ -611,6 +614,38 @@ All development and deployment scripts are in the `support/` directory:
 | `support/wait_check.py` | No sleep or busy-wait in the firmware (DD-053) |
 | `support/prove_core0.py` | Core1 cannot hang core0; the pressure collector's handler is RAM-only |
 | `support/prove_flight_ram.py` | The flight path runs from RAM from launch to landing (FLT-RT-02) |
+
+## Flight Data Explorer
+
+`docs/flight_explorer.html` plots flight logs and other sensor data as
+layers on one time axis. It is one file with no dependencies: open it from
+a checkout, or at
+[n9wxu.github.io/pyro_fw/flight_explorer.html](https://n9wxu.github.io/pyro_fw/flight_explorer.html).
+
+- **Data from the disk:** **Add files**, or drop files on the page. It reads
+  a pyro flight CSV, an AltOS CSV, and any CSV with a time column, such as an
+  OpenRocket export.
+- **Data from the repository:** it lists the CSV files of a repository's
+  branch, this one's `main` unless told otherwise, and adds the ones
+  selected. A link can name them:
+  `flight_explorer.html?file=test_data/open_rocket_export.csv`, with
+  `repo=` and `branch=` for another repository or branch.
+- **Layers:** each column of each file is a layer to tick on or off. Layers
+  with the same unit share a plot, and every plot shares the time axis. A
+  file's time can be shifted to line it up with another's.
+- **Zoom:** drag across a plot to show that span, down to single readings;
+  scroll to zoom about the pointer; shift-drag to move along the flight. The
+  pointer reads every layer at its time.
+- **Events:** the events of each file are marked down every plot and listed,
+  narrowed by source (flight events, Lua script, estimators, log records)
+  and by name. Selecting one shows the second each side of it.
+- **Fit and interpolate:** on the span shown, a polynomial fit of order 1
+  to 6 with its equation, error and top; a sliding fit for a smoothed value
+  or a rate of change; a moving median or average; interpolation to even
+  steps by straight lines or a cubic spline; and the difference between two
+  layers. Each result is a layer of its own.
+
+Its tests are `test/web/test_explorer.spec.js`.
 
 ## Reporting a problem
 
