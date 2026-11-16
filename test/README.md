@@ -241,4 +241,5 @@ test/
   web/                   Playwright UI tests, mock_server.js, static_server.js, hw_ui_check.js
 test_data/
   open_rocket_export.csv OpenRocket simulation (228 points, 16 s flight, 165 ft peak)
+  mk1c/                  flight logs from MK1C boards, listed in its README
 ```
